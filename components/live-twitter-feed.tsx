@@ -19,6 +19,7 @@ import {
   AlertCircle,
   Wifi,
   WifiOff,
+  Database,
 } from "lucide-react"
 
 interface TwitterPost {
@@ -58,6 +59,9 @@ export function LiveTwitterFeed() {
   const [apiConnected, setApiConnected] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [method, setMethod] = useState<"accounts" | "search">("accounts")
+  const [isMockData, setIsMockData] = useState(false)
+  const [isRateLimited, setIsRateLimited] = useState(false)
+  const [isCached, setIsCached] = useState(false)
 
   const fetchTwitterData = async (showLoading = true) => {
     if (showLoading) setIsLoading(true)
@@ -72,12 +76,22 @@ export function LiveTwitterFeed() {
         setTrending(result.trending || [])
         setLastUpdated(new Date(result.lastUpdated))
         setApiConnected(true)
+        setIsMockData(result.mock || false)
+        setIsCached(result.cached || false)
+
+        // Check if we're rate limited
+        if (result.error && result.error.includes("rate limit")) {
+          setIsRateLimited(true)
+          setError(result.error)
+        } else {
+          setIsRateLimited(false)
+        }
       } else {
         setError(result.error)
         setApiConnected(false)
 
         // If API is not configured, show setup guide
-        if (result.error.includes("not configured")) {
+        if (result.error && result.error.includes("not configured")) {
           setApiConnected(false)
         }
       }
@@ -90,7 +104,7 @@ export function LiveTwitterFeed() {
     }
   }
 
-  // Auto-refresh every 3 minutes for live API
+  // Auto-refresh every 5 minutes for live API (reduced frequency to avoid rate limits)
   useEffect(() => {
     fetchTwitterData()
 
@@ -99,8 +113,8 @@ export function LiveTwitterFeed() {
         () => {
           fetchTwitterData(false) // Silent refresh
         },
-        3 * 60 * 1000,
-      ) // 3 minutes
+        5 * 60 * 1000,
+      ) // 5 minutes
 
       return () => clearInterval(interval)
     }
@@ -153,21 +167,32 @@ export function LiveTwitterFeed() {
             <CardTitle className="text-white flex items-center">
               <Twitter className="mr-2 h-5 w-5 text-blue-400" />
               Live X (Twitter) Feed - Kenya
-              {apiConnected === true ? (
-                <Wifi className="ml-2 h-4 w-4 text-green-500" />
+              {isMockData ? (
+                <Database className="ml-2 h-4 w-4 text-yellow-500" title="Using mock data" />
+              ) : apiConnected === true ? (
+                <Wifi className="ml-2 h-4 w-4 text-green-500" title="Connected to Twitter API" />
               ) : apiConnected === false ? (
-                <WifiOff className="ml-2 h-4 w-4 text-red-500" />
+                <WifiOff className="ml-2 h-4 w-4 text-red-500" title="Not connected to Twitter API" />
               ) : null}
-              {autoRefresh && apiConnected && (
+              {autoRefresh && apiConnected && !isRateLimited && (
                 <div className="ml-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
               )}
             </CardTitle>
             <p className="text-slate-400 text-sm">
-              {apiConnected === true
-                ? "Real-time updates from Twitter API v2"
-                : "Twitter API integration status unknown"}
+              {isMockData
+                ? "Using sample data (Twitter API rate limited or not configured)"
+                : isRateLimited
+                  ? "Twitter API rate limited - using cached data"
+                  : apiConnected === true
+                    ? "Real-time updates from Twitter API v2"
+                    : "Twitter API integration status unknown"}
             </p>
-            {lastUpdated && <p className="text-slate-500 text-xs">Last updated: {lastUpdated.toLocaleTimeString()}</p>}
+            {lastUpdated && (
+              <p className="text-slate-500 text-xs flex items-center">
+                Last updated: {lastUpdated.toLocaleTimeString()}
+                {isCached && <span className="ml-2 text-yellow-500">(cached)</span>}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -175,6 +200,7 @@ export function LiveTwitterFeed() {
               size="sm"
               onClick={() => setMethod(method === "accounts" ? "search" : "accounts")}
               className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+              disabled={isRateLimited}
             >
               {method === "accounts" ? "Accounts" : "Search"}
             </Button>
@@ -182,16 +208,18 @@ export function LiveTwitterFeed() {
               variant="outline"
               size="sm"
               onClick={() => setAutoRefresh(!autoRefresh)}
-              disabled={!apiConnected}
+              disabled={!apiConnected || isRateLimited}
               className={`border-slate-600 text-xs ${
-                autoRefresh && apiConnected ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-700"
+                autoRefresh && apiConnected && !isRateLimited
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-300 hover:bg-slate-700"
               }`}
             >
               Live {autoRefresh ? "ON" : "OFF"}
             </Button>
             <Button
               onClick={() => fetchTwitterData()}
-              disabled={isLoading}
+              disabled={isLoading || isRateLimited}
               size="sm"
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
@@ -201,10 +229,30 @@ export function LiveTwitterFeed() {
           </div>
         </div>
 
+        {/* Rate Limit Warning */}
+        {isRateLimited && (
+          <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-600 rounded-lg flex items-center">
+            <AlertCircle className="h-4 w-4 text-yellow-400 mr-2 flex-shrink-0" />
+            <span className="text-yellow-200 text-sm">
+              Twitter API rate limit reached. Using cached or sample data. Please try again later.
+            </span>
+          </div>
+        )}
+
+        {/* Mock Data Notice */}
+        {isMockData && !isRateLimited && (
+          <div className="mt-4 p-3 bg-blue-900/20 border border-blue-600 rounded-lg flex items-center">
+            <Database className="h-4 w-4 text-blue-400 mr-2 flex-shrink-0" />
+            <span className="text-blue-200 text-sm">
+              Using sample data. To see real tweets, configure Twitter API credentials in your environment variables.
+            </span>
+          </div>
+        )}
+
         {/* Error Display */}
-        {error && (
+        {error && !isRateLimited && !isMockData && (
           <div className="mt-4 p-3 bg-red-900/20 border border-red-600 rounded-lg flex items-center">
-            <AlertCircle className="h-4 w-4 text-red-400 mr-2" />
+            <AlertCircle className="h-4 w-4 text-red-400 mr-2 flex-shrink-0" />
             <span className="text-red-200 text-sm">{error}</span>
           </div>
         )}
@@ -235,6 +283,7 @@ export function LiveTwitterFeed() {
               <h3 className="text-white font-semibold mb-3 flex items-center">
                 <TrendingUp className="h-4 w-4 mr-2 text-orange-500" />
                 Trending in Kenya
+                {isMockData && <span className="text-xs text-slate-400 ml-2">(Sample Data)</span>}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {trending.slice(0, 6).map((topic, index) => (
@@ -261,7 +310,7 @@ export function LiveTwitterFeed() {
             {isLoading && posts.length === 0 && (
               <div className="text-center py-12">
                 <Twitter className="h-8 w-8 animate-pulse text-blue-400 mx-auto mb-4" />
-                <p className="text-slate-400">Loading latest posts from Twitter API...</p>
+                <p className="text-slate-400">Loading latest posts...</p>
               </div>
             )}
 
@@ -336,7 +385,6 @@ export function LiveTwitterFeed() {
                             <Heart className="h-3 w-3" />
                             <span>{formatNumber(post.likes)}</span>
                           </div>
-                          <div className="text-xs text-slate-500">Score: {post.relevanceScore.toFixed(0)}</div>
                         </div>
                         <Button
                           variant="ghost"
@@ -371,14 +419,29 @@ export function LiveTwitterFeed() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-slate-400 text-xs mb-1">
-                API Status: {apiConnected === true ? "Connected" : apiConnected === false ? "Disconnected" : "Unknown"}
+                API Status:{" "}
+                {isRateLimited
+                  ? "Rate Limited"
+                  : isMockData
+                    ? "Using Sample Data"
+                    : apiConnected === true
+                      ? "Connected"
+                      : apiConnected === false
+                        ? "Disconnected"
+                        : "Unknown"}
               </p>
               <p className="text-slate-500 text-xs">
                 Method: {method === "accounts" ? "Monitoring Accounts" : "Keyword Search"} | Posts: {posts.length} |
                 Trending: {trending.length}
               </p>
             </div>
-            {apiConnected === true && <Badge className="bg-green-600 text-white text-xs">Live API v2</Badge>}
+            {isMockData ? (
+              <Badge className="bg-yellow-600 text-white text-xs">Sample Data</Badge>
+            ) : isCached ? (
+              <Badge className="bg-blue-600 text-white text-xs">Cached Data</Badge>
+            ) : apiConnected === true ? (
+              <Badge className="bg-green-600 text-white text-xs">Live API v2</Badge>
+            ) : null}
           </div>
         </div>
       </CardContent>
