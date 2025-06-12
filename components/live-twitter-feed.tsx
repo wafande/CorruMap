@@ -20,6 +20,7 @@ import {
   Wifi,
   WifiOff,
   Database,
+  Clock,
 } from "lucide-react"
 
 interface TwitterPost {
@@ -54,7 +55,7 @@ export function LiveTwitterFeed() {
   const [trending, setTrending] = useState<TrendingTopic[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [autoRefresh, setAutoRefresh] = useState(true)
+  const [autoRefresh, setAutoRefresh] = useState(false) // Disabled by default to prevent rate limiting
   const [activeTab, setActiveTab] = useState("all")
   const [apiConnected, setApiConnected] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,6 +63,7 @@ export function LiveTwitterFeed() {
   const [isMockData, setIsMockData] = useState(false)
   const [isRateLimited, setIsRateLimited] = useState(false)
   const [isCached, setIsCached] = useState(false)
+  const [resetInSeconds, setResetInSeconds] = useState(0)
 
   const fetchTwitterData = async (showLoading = true) => {
     if (showLoading) setIsLoading(true)
@@ -78,13 +80,16 @@ export function LiveTwitterFeed() {
         setApiConnected(true)
         setIsMockData(result.mock || false)
         setIsCached(result.cached || false)
+        setIsRateLimited(result.rate_limited || false)
+        setResetInSeconds(result.reset_in_seconds || 0)
 
-        // Check if we're rate limited
-        if (result.error && result.error.includes("rate limit")) {
-          setIsRateLimited(true)
-          setError(result.error)
+        // Show appropriate messages
+        if (result.rate_limited) {
+          setError(`Twitter API rate limited. Using sample data. Reset in ${result.reset_in_seconds || 0} seconds.`)
+        } else if (result.mock) {
+          setError("Using sample data. Configure Twitter API credentials for live data.")
         } else {
-          setIsRateLimited(false)
+          setError(null)
         }
       } else {
         setError(result.error)
@@ -104,21 +109,38 @@ export function LiveTwitterFeed() {
     }
   }
 
-  // Auto-refresh every 5 minutes for live API (reduced frequency to avoid rate limits)
+  // Auto-refresh every 10 minutes when enabled and not rate limited
   useEffect(() => {
     fetchTwitterData()
 
-    if (autoRefresh && apiConnected) {
+    if (autoRefresh && apiConnected && !isRateLimited) {
       const interval = setInterval(
         () => {
           fetchTwitterData(false) // Silent refresh
         },
-        5 * 60 * 1000,
-      ) // 5 minutes
+        10 * 60 * 1000,
+      ) // 10 minutes
 
       return () => clearInterval(interval)
     }
-  }, [autoRefresh, apiConnected, method])
+  }, [autoRefresh, apiConnected, method, isRateLimited])
+
+  // Countdown timer for rate limit reset
+  useEffect(() => {
+    if (resetInSeconds > 0) {
+      const interval = setInterval(() => {
+        setResetInSeconds((prev) => {
+          if (prev <= 1) {
+            setIsRateLimited(false)
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
+
+      return () => clearInterval(interval)
+    }
+  }, [resetInSeconds])
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)
@@ -139,6 +161,12 @@ export function LiveTwitterFeed() {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`
     if (num >= 1000) return `${(num / 1000).toFixed(1)}K`
     return num.toString()
+  }
+
+  const formatTime = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = seconds % 60
+    return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`
   }
 
   const getTrendIcon = (trend: string) => {
@@ -167,8 +195,10 @@ export function LiveTwitterFeed() {
             <CardTitle className="text-white flex items-center">
               <Twitter className="mr-2 h-5 w-5 text-blue-400" />
               Live X (Twitter) Feed - Kenya
-              {isMockData ? (
-                <Database className="ml-2 h-4 w-4 text-yellow-500" title="Using mock data" />
+              {isRateLimited ? (
+                <Clock className="ml-2 h-4 w-4 text-yellow-500" title="Rate limited" />
+              ) : isMockData ? (
+                <Database className="ml-2 h-4 w-4 text-yellow-500" title="Using sample data" />
               ) : apiConnected === true ? (
                 <Wifi className="ml-2 h-4 w-4 text-green-500" title="Connected to Twitter API" />
               ) : apiConnected === false ? (
@@ -179,10 +209,10 @@ export function LiveTwitterFeed() {
               )}
             </CardTitle>
             <p className="text-slate-400 text-sm">
-              {isMockData
-                ? "Using sample data (Twitter API rate limited or not configured)"
-                : isRateLimited
-                  ? "Twitter API rate limited - using cached data"
+              {isRateLimited
+                ? `Twitter API rate limited - Reset in ${formatTime(resetInSeconds)}`
+                : isMockData
+                  ? "Using sample data (Twitter API not configured or rate limited)"
                   : apiConnected === true
                     ? "Real-time updates from Twitter API v2"
                     : "Twitter API integration status unknown"}
@@ -215,11 +245,11 @@ export function LiveTwitterFeed() {
                   : "text-slate-300 hover:bg-slate-700"
               }`}
             >
-              Live {autoRefresh ? "ON" : "OFF"}
+              Auto {autoRefresh ? "ON" : "OFF"}
             </Button>
             <Button
               onClick={() => fetchTwitterData()}
-              disabled={isLoading || isRateLimited}
+              disabled={isLoading}
               size="sm"
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
@@ -232,10 +262,11 @@ export function LiveTwitterFeed() {
         {/* Rate Limit Warning */}
         {isRateLimited && (
           <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-600 rounded-lg flex items-center">
-            <AlertCircle className="h-4 w-4 text-yellow-400 mr-2 flex-shrink-0" />
-            <span className="text-yellow-200 text-sm">
-              Twitter API rate limit reached. Using cached or sample data. Please try again later.
-            </span>
+            <Clock className="h-4 w-4 text-yellow-400 mr-2 flex-shrink-0" />
+            <div className="flex-1">
+              <span className="text-yellow-200 text-sm">Twitter API rate limit reached. Using sample data.</span>
+              <div className="text-yellow-300 text-xs mt-1">Reset in: {formatTime(resetInSeconds)}</div>
+            </div>
           </div>
         )}
 
@@ -421,7 +452,7 @@ export function LiveTwitterFeed() {
               <p className="text-slate-400 text-xs mb-1">
                 API Status:{" "}
                 {isRateLimited
-                  ? "Rate Limited"
+                  ? `Rate Limited (${formatTime(resetInSeconds)})`
                   : isMockData
                     ? "Using Sample Data"
                     : apiConnected === true
@@ -435,7 +466,9 @@ export function LiveTwitterFeed() {
                 Trending: {trending.length}
               </p>
             </div>
-            {isMockData ? (
+            {isRateLimited ? (
+              <Badge className="bg-yellow-600 text-white text-xs">Rate Limited</Badge>
+            ) : isMockData ? (
               <Badge className="bg-yellow-600 text-white text-xs">Sample Data</Badge>
             ) : isCached ? (
               <Badge className="bg-blue-600 text-white text-xs">Cached Data</Badge>
