@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TwitterSetupGuide } from "./twitter-setup-guide"
 import {
   RefreshCw,
   ExternalLink,
@@ -15,6 +16,9 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  AlertCircle,
+  Wifi,
+  WifiOff,
 } from "lucide-react"
 
 interface TwitterPost {
@@ -31,6 +35,8 @@ interface TwitterPost {
   hashtags: string[]
   mentions: string[]
   category: "breaking" | "trending" | "corruption" | "politics" | "social"
+  relevanceScore: number
+  profileImage?: string
 }
 
 interface TrendingTopic {
@@ -49,47 +55,56 @@ export function LiveTwitterFeed() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [activeTab, setActiveTab] = useState("all")
+  const [apiConnected, setApiConnected] = useState<boolean | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [method, setMethod] = useState<"accounts" | "search">("accounts")
 
   const fetchTwitterData = async (showLoading = true) => {
     if (showLoading) setIsLoading(true)
+    setError(null)
 
     try {
-      const [twitterResponse, trendingResponse] = await Promise.all([fetch("/api/twitter"), fetch("/api/trending")])
+      const response = await fetch(`/api/twitter/live?method=${method}&max_results=30`)
+      const result = await response.json()
 
-      const twitterResult = await twitterResponse.json()
-      const trendingResult = await trendingResponse.json()
+      if (result.success) {
+        setPosts(result.data)
+        setTrending(result.trending || [])
+        setLastUpdated(new Date(result.lastUpdated))
+        setApiConnected(true)
+      } else {
+        setError(result.error)
+        setApiConnected(false)
 
-      if (twitterResult.success) {
-        setPosts(twitterResult.data)
-        setTrending(twitterResult.trending || [])
-        setLastUpdated(new Date(twitterResult.lastUpdated))
-      }
-
-      if (trendingResult.success) {
-        setTrending(trendingResult.data.trending)
+        // If API is not configured, show setup guide
+        if (result.error.includes("not configured")) {
+          setApiConnected(false)
+        }
       }
     } catch (error) {
       console.error("Error fetching Twitter data:", error)
+      setError("Failed to connect to Twitter API")
+      setApiConnected(false)
     } finally {
       setIsLoading(false)
     }
   }
 
-  // Auto-refresh every 2 minutes for more real-time feel
+  // Auto-refresh every 3 minutes for live API
   useEffect(() => {
     fetchTwitterData()
 
-    if (autoRefresh) {
+    if (autoRefresh && apiConnected) {
       const interval = setInterval(
         () => {
           fetchTwitterData(false) // Silent refresh
         },
-        2 * 60 * 1000,
-      ) // 2 minutes
+        3 * 60 * 1000,
+      ) // 3 minutes
 
       return () => clearInterval(interval)
     }
-  }, [autoRefresh])
+  }, [autoRefresh, apiConnected, method])
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp)
@@ -125,6 +140,11 @@ export function LiveTwitterFeed() {
 
   const filteredPosts = activeTab === "all" ? posts : posts.filter((post) => post.category === activeTab)
 
+  // Show setup guide if API is not connected
+  if (apiConnected === false && error?.includes("not configured")) {
+    return <TwitterSetupGuide />
+  }
+
   return (
     <Card className="bg-slate-800/50 border-slate-700">
       <CardHeader>
@@ -133,18 +153,38 @@ export function LiveTwitterFeed() {
             <CardTitle className="text-white flex items-center">
               <Twitter className="mr-2 h-5 w-5 text-blue-400" />
               Live X (Twitter) Feed - Kenya
-              {autoRefresh && <div className="ml-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>}
+              {apiConnected === true ? (
+                <Wifi className="ml-2 h-4 w-4 text-green-500" />
+              ) : apiConnected === false ? (
+                <WifiOff className="ml-2 h-4 w-4 text-red-500" />
+              ) : null}
+              {autoRefresh && apiConnected && (
+                <div className="ml-2 w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+              )}
             </CardTitle>
-            <p className="text-slate-400 text-sm">Real-time updates from key Kenyan voices and trending topics</p>
+            <p className="text-slate-400 text-sm">
+              {apiConnected === true
+                ? "Real-time updates from Twitter API v2"
+                : "Twitter API integration status unknown"}
+            </p>
             {lastUpdated && <p className="text-slate-500 text-xs">Last updated: {lastUpdated.toLocaleTimeString()}</p>}
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setMethod(method === "accounts" ? "search" : "accounts")}
+              className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+            >
+              {method === "accounts" ? "Accounts" : "Search"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setAutoRefresh(!autoRefresh)}
+              disabled={!apiConnected}
               className={`border-slate-600 text-xs ${
-                autoRefresh ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-700"
+                autoRefresh && apiConnected ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-700"
               }`}
             >
               Live {autoRefresh ? "ON" : "OFF"}
@@ -160,6 +200,14 @@ export function LiveTwitterFeed() {
             </Button>
           </div>
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="mt-4 p-3 bg-red-900/20 border border-red-600 rounded-lg flex items-center">
+            <AlertCircle className="h-4 w-4 text-red-400 mr-2" />
+            <span className="text-red-200 text-sm">{error}</span>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -182,44 +230,38 @@ export function LiveTwitterFeed() {
           </TabsList>
 
           {/* Trending Topics */}
-          <div className="mt-4 mb-6">
-            <h3 className="text-white font-semibold mb-3 flex items-center">
-              <TrendingUp className="h-4 w-4 mr-2 text-orange-500" />
-              Trending in Kenya
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {trending.slice(0, 6).map((topic, index) => (
-                <div key={topic.hashtag} className="bg-slate-700/50 rounded-lg p-3 border border-slate-600">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-slate-400 text-xs">#{index + 1}</span>
-                      <span className="text-blue-400 font-medium text-sm">{topic.hashtag}</span>
-                      {getTrendIcon(topic.trend)}
+          {trending.length > 0 && (
+            <div className="mt-4 mb-6">
+              <h3 className="text-white font-semibold mb-3 flex items-center">
+                <TrendingUp className="h-4 w-4 mr-2 text-orange-500" />
+                Trending in Kenya
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {trending.slice(0, 6).map((topic, index) => (
+                  <div key={topic.hashtag} className="bg-slate-700/50 rounded-lg p-3 border border-slate-600">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-slate-400 text-xs">#{index + 1}</span>
+                        <span className="text-blue-400 font-medium text-sm">{topic.hashtag}</span>
+                        {getTrendIcon(topic.trend)}
+                      </div>
+                      <Badge variant="outline" className="border-slate-500 text-slate-300 text-xs">
+                        {formatNumber(topic.tweets)}
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className="border-slate-500 text-slate-300 text-xs">
-                      {formatNumber(topic.tweets)}
-                    </Badge>
+                    <p className="text-slate-400 text-xs mt-1 truncate">{topic.description}</p>
                   </div>
-                  <p className="text-slate-400 text-xs mt-1 truncate">{topic.description}</p>
-                  {topic.change !== 0 && (
-                    <p
-                      className={`text-xs mt-1 ${topic.trend === "up" ? "text-green-400" : topic.trend === "down" ? "text-red-400" : "text-gray-400"}`}
-                    >
-                      {topic.trend === "up" ? "+" : ""}
-                      {topic.change.toFixed(1)}%
-                    </p>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <TabsContent value={activeTab} className="mt-0">
             {/* Loading State */}
             {isLoading && posts.length === 0 && (
               <div className="text-center py-12">
                 <Twitter className="h-8 w-8 animate-pulse text-blue-400 mx-auto mb-4" />
-                <p className="text-slate-400">Loading latest posts...</p>
+                <p className="text-slate-400">Loading latest posts from Twitter API...</p>
               </div>
             )}
 
@@ -232,9 +274,17 @@ export function LiveTwitterFeed() {
                 >
                   <div className="flex items-start space-x-3">
                     <div className="flex-shrink-0">
-                      <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center">
-                        <Twitter className="h-5 w-5 text-blue-400" />
-                      </div>
+                      {post.profileImage ? (
+                        <img
+                          src={post.profileImage || "/placeholder.svg"}
+                          alt={post.name}
+                          className="w-10 h-10 rounded-full"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center">
+                          <Twitter className="h-5 w-5 text-blue-400" />
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center space-x-2 mb-1">
@@ -249,6 +299,9 @@ export function LiveTwitterFeed() {
                         <span className="text-slate-500 text-sm">{formatTimestamp(post.timestamp)}</span>
                         {post.category === "breaking" && (
                           <Badge className="bg-red-600 text-white text-xs px-1 py-0">BREAKING</Badge>
+                        )}
+                        {post.relevanceScore > 80 && (
+                          <Badge className="bg-orange-600 text-white text-xs px-1 py-0">HIGH</Badge>
                         )}
                       </div>
 
@@ -283,6 +336,7 @@ export function LiveTwitterFeed() {
                             <Heart className="h-3 w-3" />
                             <span>{formatNumber(post.likes)}</span>
                           </div>
+                          <div className="text-xs text-slate-500">Score: {post.relevanceScore.toFixed(0)}</div>
                         </div>
                         <Button
                           variant="ghost"
@@ -306,32 +360,25 @@ export function LiveTwitterFeed() {
               <div className="text-center py-12 text-slate-400">
                 <Twitter className="h-16 w-16 mx-auto mb-4 opacity-50" />
                 <p className="text-lg">No posts in this category</p>
-                <p className="text-sm">Try switching to a different tab</p>
+                <p className="text-sm">Try switching to a different tab or check your API connection</p>
               </div>
             )}
           </TabsContent>
         </Tabs>
 
-        {/* Monitored Accounts */}
+        {/* API Status */}
         <div className="mt-6 pt-4 border-t border-slate-700">
-          <p className="text-slate-400 text-xs mb-2">Monitoring Key Kenyan Voices:</p>
-          <div className="flex flex-wrap gap-2">
-            {[
-              "@C_NyaKundiH",
-              "@lynn_ngugi1",
-              "@Kenyans",
-              "@LarryMadowo",
-              "@bonifacemwangi",
-              "@ahmednasirlaw",
-              "@RobertAlai",
-              "@MarthaKarua",
-              "@WilliamsRuto",
-              "@RailaOdinga",
-            ].map((account) => (
-              <Badge key={account} variant="outline" className="border-slate-600 text-slate-400 text-xs">
-                {account}
-              </Badge>
-            ))}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-slate-400 text-xs mb-1">
+                API Status: {apiConnected === true ? "Connected" : apiConnected === false ? "Disconnected" : "Unknown"}
+              </p>
+              <p className="text-slate-500 text-xs">
+                Method: {method === "accounts" ? "Monitoring Accounts" : "Keyword Search"} | Posts: {posts.length} |
+                Trending: {trending.length}
+              </p>
+            </div>
+            {apiConnected === true && <Badge className="bg-green-600 text-white text-xs">Live API v2</Badge>}
           </div>
         </div>
       </CardContent>
