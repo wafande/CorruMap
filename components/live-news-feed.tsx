@@ -4,7 +4,8 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { RefreshCw, ExternalLink, Calendar, TrendingUp, AlertCircle } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { RefreshCw, ExternalLink, Calendar, TrendingUp, AlertCircle, Wifi, WifiOff } from "lucide-react"
 
 interface NewsArticle {
   id: string
@@ -18,12 +19,23 @@ interface NewsArticle {
   imageUrl?: string
 }
 
+interface NewsResponse {
+  success: boolean
+  data: NewsArticle[]
+  total: number
+  lastUpdated: string
+  usingMockData?: boolean
+  error?: string
+}
+
 export function LiveNewsFeed() {
   const [articles, setArticles] = useState<NewsArticle[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [activeCategory, setActiveCategory] = useState("all")
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [usingMockData, setUsingMockData] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const categories = [
     { id: "all", label: "All", count: 0 },
@@ -35,18 +47,25 @@ export function LiveNewsFeed() {
 
   const fetchNews = async (showLoading = true) => {
     if (showLoading) setIsLoading(true)
+    setError(null)
 
     try {
       const response = await fetch(`/api/news/live?category=${activeCategory}&limit=20`)
-      const result = await response.json()
+      const result: NewsResponse = await response.json()
 
       if (result.success) {
         setArticles(result.data)
         setLastUpdated(new Date(result.lastUpdated))
+        setUsingMockData(result.usingMockData || false)
+        if (result.error) {
+          setError(result.error)
+        }
       } else {
+        setError("Failed to fetch news")
         console.error("Failed to fetch news:", result.error)
       }
     } catch (error) {
+      setError("Network error - unable to fetch news")
       console.error("Error fetching news:", error)
     } finally {
       setIsLoading(false)
@@ -109,9 +128,17 @@ export function LiveNewsFeed() {
             <CardTitle className="text-white flex items-center">
               <TrendingUp className="mr-2 h-5 w-5 text-kenya-red" />
               Live News Feed
-              {autoRefresh && <div className="ml-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>}
+              {autoRefresh && !usingMockData && (
+                <div className="ml-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              )}
+              {usingMockData && <WifiOff className="ml-2 h-4 w-4 text-yellow-500" />}
+              {!usingMockData && <Wifi className="ml-2 h-4 w-4 text-green-500" />}
             </CardTitle>
-            <p className="text-slate-400 text-sm">Real-time corruption & governance news from major Kenyan sources</p>
+            <p className="text-slate-400 text-sm">
+              {usingMockData
+                ? "Sample corruption & governance news (RSS feeds unavailable)"
+                : "Real-time corruption & governance news from major Kenyan sources"}
+            </p>
             {lastUpdated && <p className="text-slate-500 text-xs">Last updated: {lastUpdated.toLocaleTimeString()}</p>}
           </div>
           <div className="flex items-center gap-2">
@@ -138,6 +165,25 @@ export function LiveNewsFeed() {
         </div>
       </CardHeader>
       <CardContent>
+        {/* Error Alert */}
+        {error && (
+          <Alert className="mb-4 border-yellow-600 bg-yellow-600/10">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="text-yellow-200">{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {/* Mock Data Notice */}
+        {usingMockData && (
+          <Alert className="mb-4 border-blue-600 bg-blue-600/10">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="text-blue-200">
+              Showing sample data. RSS feeds are currently unavailable. This demonstrates the platform's functionality
+              with realistic corruption and governance news.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Category Filters */}
         <div className="flex flex-wrap gap-2 mb-6">
           {updatedCategories.map((category) => (

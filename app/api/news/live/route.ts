@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { parseRSSFeed, RSS_FEEDS, calculateRelevanceScore, categorizeArticle } from "@/lib/rss-parser"
+import { parseRSSFeed, RSS_FEEDS, calculateRelevanceScore, categorizeArticle, getMockNewsData } from "@/lib/rss-parser"
 
 export async function GET(request: Request) {
   try {
@@ -7,10 +7,14 @@ export async function GET(request: Request) {
     const category = searchParams.get("category") || "all"
     const limit = Number.parseInt(searchParams.get("limit") || "20")
 
-    // Fetch from multiple RSS sources concurrently
+    // Fetch from multiple RSS sources concurrently with timeout
     const feedPromises = RSS_FEEDS.map(async (feed) => {
       try {
-        const items = await parseRSSFeed(feed.url)
+        const items = await Promise.race([
+          parseRSSFeed(feed.url),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000)),
+        ])
+
         return items.map((item) => ({
           ...item,
           source: feed.source,
@@ -18,13 +22,22 @@ export async function GET(request: Request) {
           relevanceScore: calculateRelevanceScore(item, feed.keywords),
         }))
       } catch (error) {
-        console.error(`Error fetching ${feed.source}:`, error)
+        console.warn(`Error fetching ${feed.source}:`, error)
         return []
       }
     })
 
     const allFeeds = await Promise.all(feedPromises)
     let allArticles = allFeeds.flat()
+
+    // If no articles were fetched (all feeds failed), use mock data
+    if (allArticles.length === 0) {
+      console.log("All RSS feeds failed, using mock data")
+      allArticles = getMockNewsData().map((item) => ({
+        ...item,
+        relevanceScore: calculateRelevanceScore(item, ["corruption", "government", "eacc", "fraud"]),
+      }))
+    }
 
     // Filter by category if specified
     if (category !== "all") {
@@ -47,17 +60,25 @@ export async function GET(request: Request) {
       data: limitedArticles,
       total: allArticles.length,
       lastUpdated: new Date().toISOString(),
+      usingMockData: allFeeds.flat().length === 0,
     })
   } catch (error) {
     console.error("Error fetching live news:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Failed to fetch live news",
-        data: [],
-      },
-      { status: 500 },
-    )
+
+    // Return mock data as fallback
+    const mockData = getMockNewsData().map((item) => ({
+      ...item,
+      relevanceScore: calculateRelevanceScore(item, ["corruption", "government", "eacc", "fraud"]),
+    }))
+
+    return NextResponse.json({
+      success: true,
+      data: mockData.slice(0, Number.parseInt(new URL(request.url).searchParams.get("limit") || "20")),
+      total: mockData.length,
+      lastUpdated: new Date().toISOString(),
+      usingMockData: true,
+      error: "RSS feeds unavailable, showing sample data",
+    })
   }
 }
 
