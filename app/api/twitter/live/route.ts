@@ -24,15 +24,49 @@ interface ProcessedTweet {
   profileImage?: string
 }
 
-// Initialize Twitter API client
-let twitterClient: TwitterApiClient | null = null
+// Global rate limit state at the API route level
+let isGloballyRateLimited = false
+let globalRateLimitResetTime = 0
 let lastFetchTime = 0
-let isRateLimited = false
-let rateLimitResetTime = 0
-const CACHE_DURATION = 15 * 60 * 1000 // 15 minutes cache
+const CACHE_DURATION = 20 * 60 * 1000 // 20 minutes cache
 
 // Cache for API responses
 let cachedResponse: any = null
+
+// Check if we're currently rate limited
+function checkRateLimit(): { isRateLimited: boolean; resetInSeconds: number } {
+  const now = Date.now()
+
+  if (isGloballyRateLimited && now < globalRateLimitResetTime) {
+    return {
+      isRateLimited: true,
+      resetInSeconds: Math.ceil((globalRateLimitResetTime - now) / 1000),
+    }
+  }
+
+  // Reset if time has passed
+  if (isGloballyRateLimited && now >= globalRateLimitResetTime) {
+    isGloballyRateLimited = false
+    globalRateLimitResetTime = 0
+    console.log("Rate limit automatically reset")
+  }
+
+  return {
+    isRateLimited: false,
+    resetInSeconds: 0,
+  }
+}
+
+// Set rate limit status
+function setRateLimit(resetTimeSeconds?: number): void {
+  isGloballyRateLimited = true
+  if (resetTimeSeconds) {
+    globalRateLimitResetTime = Date.now() + resetTimeSeconds * 1000
+  } else {
+    globalRateLimitResetTime = Date.now() + 15 * 60 * 1000 // Default 15 minutes
+  }
+  console.log(`Rate limited until: ${new Date(globalRateLimitResetTime).toISOString()}`)
+}
 
 function initializeTwitterClient() {
   const bearerToken = process.env.TWITTER_BEARER_TOKEN
@@ -113,7 +147,7 @@ function generateTrendingTopics(tweets: any[]): any[] {
     .slice(0, 10)
     .map(([hashtag, count]) => ({
       hashtag,
-      tweets: count * Math.floor(Math.random() * 1000 + 500), // Simulate realistic numbers
+      tweets: count * Math.floor(Math.random() * 1000 + 500),
       category: hashtag.toLowerCase().includes("corruption")
         ? "corruption"
         : hashtag.toLowerCase().includes("ruto") || hashtag.toLowerCase().includes("parliament")
@@ -125,7 +159,7 @@ function generateTrendingTopics(tweets: any[]): any[] {
     }))
 }
 
-// Enhanced mock data generator
+// Enhanced mock data generator - always returns fresh data
 function generateMockKenyanTweets(): { tweets: any[]; users: any[] } {
   const mockUsers = [
     {
@@ -234,160 +268,93 @@ function generateMockKenyanTweets(): { tweets: any[]; users: any[] } {
     },
   ]
 
-  // Generate more diverse and recent tweets
+  // Generate fresh timestamps and content for each request
   const currentTime = Date.now()
-  const mockTweets = [
+  const tweetTemplates = [
     {
-      id: "mock_tweet_1",
-      text: "BREAKING: EACC has recovered assets worth Ksh 22.8 billion in the last fiscal year. This is the highest recovery in Kenya's history. The fight against corruption is yielding results! #CorruptionFreeKenya #AssetRecovery #EACC",
-      created_at: new Date(currentTime - 1000 * 60 * 15).toISOString(), // 15 minutes ago
+      template:
+        "BREAKING: EACC has recovered assets worth Ksh {amount} billion in the last fiscal year. This is the highest recovery in Kenya's history. The fight against corruption is yielding results! #CorruptionFreeKenya #AssetRecovery #EACC",
       author_id: "mock_4",
-      public_metrics: {
-        retweet_count: 1245,
-        like_count: 3782,
-        reply_count: 421,
-        quote_count: 189,
-      },
-      entities: {
-        hashtags: [{ tag: "CorruptionFreeKenya" }, { tag: "AssetRecovery" }, { tag: "EACC" }],
-      },
+      hashtags: [{ tag: "CorruptionFreeKenya" }, { tag: "AssetRecovery" }, { tag: "EACC" }],
     },
     {
-      id: "mock_tweet_2",
-      text: "The Finance Bill protests have exposed deep corruption in our procurement systems. We need transparency in ALL government contracts. Young Kenyans are demanding accountability! #RejectFinanceBill2024 #GenZKenya #CorruptionKills",
-      created_at: new Date(currentTime - 1000 * 60 * 45).toISOString(), // 45 minutes ago
+      template:
+        "The Finance Bill protests have exposed deep corruption in our procurement systems. We need transparency in ALL government contracts. Young Kenyans are demanding accountability! #RejectFinanceBill2024 #GenZKenya #CorruptionKills",
       author_id: "mock_1",
-      public_metrics: {
-        retweet_count: 2876,
-        like_count: 9541,
-        reply_count: 732,
-        quote_count: 412,
-      },
-      entities: {
-        hashtags: [{ tag: "RejectFinanceBill2024" }, { tag: "GenZKenya" }, { tag: "CorruptionKills" }],
-      },
+      hashtags: [{ tag: "RejectFinanceBill2024" }, { tag: "GenZKenya" }, { tag: "CorruptionKills" }],
     },
     {
-      id: "mock_tweet_3",
-      text: "Just interviewed Kenya's anti-corruption czar for @CNN. The EACC says they're investigating 24 governors for corruption and misappropriation of county funds. Full story tonight at 9pm EAT. This is huge! #KenyaCorruption #CountyGovernors",
-      created_at: new Date(currentTime - 1000 * 60 * 90).toISOString(), // 1.5 hours ago
+      template:
+        "Just interviewed Kenya's anti-corruption czar for @CNN. The EACC says they're investigating {count} governors for corruption and misappropriation of county funds. Full story tonight at 9pm EAT. This is huge! #KenyaCorruption #CountyGovernors",
       author_id: "mock_2",
-      public_metrics: {
-        retweet_count: 1532,
-        like_count: 4267,
-        reply_count: 328,
-        quote_count: 156,
-      },
-      entities: {
-        hashtags: [{ tag: "KenyaCorruption" }, { tag: "CountyGovernors" }],
-      },
+      hashtags: [{ tag: "KenyaCorruption" }, { tag: "CountyGovernors" }],
     },
     {
-      id: "mock_tweet_4",
-      text: "The Judiciary must remain independent to effectively fight corruption. When courts are compromised, impunity thrives. We need judges who cannot be bought! #JudicialIndependence #RuleOfLaw #AntiCorruption",
-      created_at: new Date(currentTime - 1000 * 60 * 120).toISOString(), // 2 hours ago
+      template:
+        "The Judiciary must remain independent to effectively fight corruption. When courts are compromised, impunity thrives. We need judges who cannot be bought! #JudicialIndependence #RuleOfLaw #AntiCorruption",
       author_id: "mock_3",
-      public_metrics: {
-        retweet_count: 1876,
-        like_count: 5432,
-        reply_count: 421,
-        quote_count: 187,
-      },
-      entities: {
-        hashtags: [{ tag: "JudicialIndependence" }, { tag: "RuleOfLaw" }, { tag: "AntiCorruption" }],
-      },
+      hashtags: [{ tag: "JudicialIndependence" }, { tag: "RuleOfLaw" }, { tag: "AntiCorruption" }],
     },
     {
-      id: "mock_tweet_5",
-      text: "Human rights activists are being targeted for exposing corruption. This must stop! We need protection for whistleblowers and anti-corruption advocates. Their lives are in danger! #ProtectWhistleblowers #HumanRights #StopAbductions",
-      created_at: new Date(currentTime - 1000 * 60 * 180).toISOString(), // 3 hours ago
+      template:
+        "Human rights activists are being targeted for exposing corruption. This must stop! We need protection for whistleblowers and anti-corruption advocates. Their lives are in danger! #ProtectWhistleblowers #HumanRights #StopAbductions",
       author_id: "mock_5",
-      public_metrics: {
-        retweet_count: 987,
-        like_count: 2543,
-        reply_count: 213,
-        quote_count: 98,
-      },
-      entities: {
-        hashtags: [{ tag: "ProtectWhistleblowers" }, { tag: "HumanRights" }, { tag: "StopAbductions" }],
-      },
+      hashtags: [{ tag: "ProtectWhistleblowers" }, { tag: "HumanRights" }, { tag: "StopAbductions" }],
     },
     {
-      id: "mock_tweet_6",
-      text: "Today we charged 3 senior procurement officers with abuse of office and fraudulent acquisition of public property worth Ksh 348 million. Justice will be served! #FightingCorruption #Accountability #Justice",
-      created_at: new Date(currentTime - 1000 * 60 * 240).toISOString(), // 4 hours ago
+      template:
+        "Today we charged {count} senior procurement officers with abuse of office and fraudulent acquisition of public property worth Ksh {amount} million. Justice will be served! #FightingCorruption #Accountability #Justice",
       author_id: "mock_4",
-      public_metrics: {
-        retweet_count: 876,
-        like_count: 2134,
-        reply_count: 187,
-        quote_count: 76,
-      },
-      entities: {
-        hashtags: [{ tag: "FightingCorruption" }, { tag: "Accountability" }, { tag: "Justice" }],
-      },
+      hashtags: [{ tag: "FightingCorruption" }, { tag: "Accountability" }, { tag: "Justice" }],
     },
     {
-      id: "mock_tweet_7",
-      text: "The youth of Kenya are demanding accountability from their leaders. Their voices cannot be ignored. #GenZKenya is leading the charge against corruption and impunity. Power to the people! #YouthPower #RutoMustGo",
-      created_at: new Date(currentTime - 1000 * 60 * 300).toISOString(), // 5 hours ago
+      template:
+        "The youth of Kenya are demanding accountability from their leaders. Their voices cannot be ignored. #GenZKenya is leading the charge against corruption and impunity. Power to the people! #YouthPower #RutoMustGo",
       author_id: "mock_1",
-      public_metrics: {
-        retweet_count: 3421,
-        like_count: 8765,
-        reply_count: 654,
-        quote_count: 321,
-      },
-      entities: {
-        hashtags: [{ tag: "GenZKenya" }, { tag: "YouthPower" }, { tag: "RutoMustGo" }],
-      },
+      hashtags: [{ tag: "GenZKenya" }, { tag: "YouthPower" }, { tag: "RutoMustGo" }],
     },
     {
-      id: "mock_tweet_8",
-      text: "The DPP must prosecute all corruption cases without fear or favor. We cannot have sacred cows in the fight against graft. Equal justice under the law! #DPP #EqualJustice #NoSacredCows",
-      created_at: new Date(currentTime - 1000 * 60 * 360).toISOString(), // 6 hours ago
+      template:
+        "The DPP must prosecute all corruption cases without fear or favor. We cannot have sacred cows in the fight against graft. Equal justice under the law! #DPP #EqualJustice #NoSacredCows",
       author_id: "mock_6",
-      public_metrics: {
-        retweet_count: 1234,
-        like_count: 3456,
-        reply_count: 234,
-        quote_count: 123,
-      },
-      entities: {
-        hashtags: [{ tag: "DPP" }, { tag: "EqualJustice" }, { tag: "NoSacredCows" }],
-      },
+      hashtags: [{ tag: "DPP" }, { tag: "EqualJustice" }, { tag: "NoSacredCows" }],
     },
     {
-      id: "mock_tweet_9",
-      text: "Corruption is not just about money - it's about denying Kenyans their right to quality healthcare, education, and infrastructure. Every stolen shilling is a life affected! #CorruptionKills #KenyansDeserveBetter",
-      created_at: new Date(currentTime - 1000 * 60 * 420).toISOString(), // 7 hours ago
+      template:
+        "Corruption is not just about money - it's about denying Kenyans their right to quality healthcare, education, and infrastructure. Every stolen shilling is a life affected! #CorruptionKills #KenyansDeserveBetter",
       author_id: "mock_7",
-      public_metrics: {
-        retweet_count: 2100,
-        like_count: 5670,
-        reply_count: 345,
-        quote_count: 210,
-      },
-      entities: {
-        hashtags: [{ tag: "CorruptionKills" }, { tag: "KenyansDeserveBetter" }],
-      },
+      hashtags: [{ tag: "CorruptionKills" }, { tag: "KenyansDeserveBetter" }],
     },
     {
-      id: "mock_tweet_10",
-      text: "Tonight on my show, we discuss the impact of corruption on ordinary Kenyans. How do we build a corruption-free society? Join the conversation at 8pm. #LynnNgugiShow #CorruptionFreeKenya #BuildingKenya",
-      created_at: new Date(currentTime - 1000 * 60 * 480).toISOString(), // 8 hours ago
+      template:
+        "Tonight on my show, we discuss the impact of corruption on ordinary Kenyans. How do we build a corruption-free society? Join the conversation at 8pm. #LynnNgugiShow #CorruptionFreeKenya #BuildingKenya",
       author_id: "mock_8",
-      public_metrics: {
-        retweet_count: 890,
-        like_count: 2340,
-        reply_count: 156,
-        quote_count: 89,
-      },
-      entities: {
-        hashtags: [{ tag: "LynnNgugiShow" }, { tag: "CorruptionFreeKenya" }, { tag: "BuildingKenya" }],
-      },
+      hashtags: [{ tag: "LynnNgugiShow" }, { tag: "CorruptionFreeKenya" }, { tag: "BuildingKenya" }],
     },
   ]
+
+  const mockTweets = tweetTemplates.map((template, index) => {
+    // Generate dynamic content
+    let text = template.template
+    text = text.replace("{amount}", (Math.random() * 50 + 10).toFixed(1))
+    text = text.replace("{count}", Math.floor(Math.random() * 30 + 15).toString())
+
+    return {
+      id: `mock_tweet_${index + 1}_${Date.now()}`,
+      text,
+      created_at: new Date(currentTime - 1000 * 60 * Math.floor(Math.random() * 600 + 10)).toISOString(),
+      author_id: template.author_id,
+      public_metrics: {
+        retweet_count: Math.floor(Math.random() * 3000 + 500),
+        like_count: Math.floor(Math.random() * 8000 + 1000),
+        reply_count: Math.floor(Math.random() * 800 + 100),
+        quote_count: Math.floor(Math.random() * 400 + 50),
+      },
+      entities: {
+        hashtags: template.hashtags,
+      },
+    }
+  })
 
   return {
     tweets: mockTweets,
@@ -399,11 +366,13 @@ export async function GET(request: Request) {
   try {
     const now = Date.now()
 
-    // Check if we're currently rate limited
-    if (isRateLimited && now < rateLimitResetTime) {
-      console.log(`Still rate limited. Reset in ${Math.ceil((rateLimitResetTime - now) / 1000)} seconds`)
+    // Check rate limit status first
+    const rateLimitStatus = checkRateLimit()
 
-      // Use mock data when rate limited
+    // If rate limited, immediately return mock data
+    if (rateLimitStatus.isRateLimited) {
+      console.log(`Rate limited. Reset in ${rateLimitStatus.resetInSeconds} seconds. Using mock data.`)
+
       const mockData = generateMockKenyanTweets()
       const processedTweets = mockData.tweets.map((tweet: any) => {
         const author = mockData.users.find((u: any) => u.id === tweet.author_id)
@@ -425,7 +394,7 @@ export async function GET(request: Request) {
           hashtags,
           mentions,
           category,
-          relevanceScore: Math.floor(Math.random() * 40) + 60, // Random score between 60-100
+          relevanceScore: Math.floor(Math.random() * 40) + 60,
           profileImage: author?.profile_image_url,
         }
       })
@@ -443,15 +412,8 @@ export async function GET(request: Request) {
         api_source: "mock",
         mock: true,
         rate_limited: true,
-        reset_in_seconds: Math.ceil((rateLimitResetTime - now) / 1000),
+        reset_in_seconds: rateLimitStatus.resetInSeconds,
       })
-    }
-
-    // Reset rate limit flag if time has passed
-    if (isRateLimited && now >= rateLimitResetTime) {
-      isRateLimited = false
-      rateLimitResetTime = 0
-      console.log("Rate limit reset, can try API again")
     }
 
     // Check if we have a cached response that's still valid
@@ -463,14 +425,12 @@ export async function GET(request: Request) {
       })
     }
 
-    // Initialize Twitter client if not already done
-    if (!twitterClient) {
-      twitterClient = initializeTwitterClient()
-    }
-
     const { searchParams } = new URL(request.url)
-    const method = searchParams.get("method") || "accounts" // 'accounts' or 'search'
+    const method = searchParams.get("method") || "accounts"
     const maxResults = Number.parseInt(searchParams.get("max_results") || "30")
+
+    // Initialize Twitter client
+    const twitterClient = initializeTwitterClient()
 
     // If no Twitter client (no API key), use mock data
     if (!twitterClient) {
@@ -497,7 +457,7 @@ export async function GET(request: Request) {
           hashtags,
           mentions,
           category,
-          relevanceScore: Math.floor(Math.random() * 40) + 60, // Random score between 60-100
+          relevanceScore: Math.floor(Math.random() * 40) + 60,
           profileImage: author?.profile_image_url,
         }
       })
@@ -523,40 +483,40 @@ export async function GET(request: Request) {
       return NextResponse.json(response)
     }
 
+    // Try to fetch real data, but catch any rate limit errors
     let tweets: any[] = []
     let users: any[] = []
 
     try {
+      console.log("Attempting to fetch real Twitter data...")
+
       if (method === "search") {
-        // Search for corruption-related tweets
         const result = await twitterClient.getCorruptionTweets(maxResults)
         tweets = result.tweets
         users = result.users
       } else {
-        // Get tweets from monitored Kenyan accounts
         const result = await twitterClient.getKenyanAccountsTweets(maxResults)
         tweets = result.tweets
         users = result.users
       }
+
+      console.log(`Successfully fetched ${tweets.length} tweets from Twitter API`)
     } catch (error) {
       console.error("Error fetching tweets:", error)
 
-      // Check if it's a rate limit error
+      // Check if it's a rate limit error and set the flag
       if (error instanceof Error && error.message.includes("rate limit")) {
-        isRateLimited = true
-
-        // Extract reset time from error message if available
         const resetMatch = error.message.match(/Try again in (\d+) seconds/)
         if (resetMatch) {
-          rateLimitResetTime = now + Number.parseInt(resetMatch[1]) * 1000
+          setRateLimit(Number.parseInt(resetMatch[1]))
         } else {
-          rateLimitResetTime = now + 15 * 60 * 1000 // Default to 15 minutes
+          setRateLimit()
         }
-
-        console.log(`Rate limited. Reset time set to: ${new Date(rateLimitResetTime).toISOString()}`)
+        console.log("Rate limit detected and set")
       }
 
       // Use mock data on any error
+      console.log("Using mock data due to API error")
       const mockData = generateMockKenyanTweets()
       tweets = mockData.tweets
       users = mockData.users
@@ -615,9 +575,9 @@ export async function GET(request: Request) {
       total: processedTweets.length,
       accounts_monitored: KENYAN_CORRUPTION_ACCOUNTS.length,
       method_used: method,
-      api_source: tweets.length > 0 && tweets[0].id?.startsWith("mock_") ? "mock" : "twitter_api_v2",
-      mock: tweets.length > 0 && tweets[0].id?.startsWith("mock_"),
-      rate_limited: isRateLimited,
+      api_source: tweets.length > 0 && tweets[0].id?.includes("mock_") ? "mock" : "twitter_api_v2",
+      mock: tweets.length > 0 && tweets[0].id?.includes("mock_"),
+      rate_limited: false,
     }
 
     // Cache the response
@@ -651,7 +611,7 @@ export async function GET(request: Request) {
         hashtags,
         mentions,
         category,
-        relevanceScore: Math.floor(Math.random() * 40) + 60, // Random score between 60-100
+        relevanceScore: Math.floor(Math.random() * 40) + 60,
         profileImage: author?.profile_image_url,
       }
     })
@@ -678,39 +638,27 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { action, accounts } = body
+    const { action } = body
 
     if (action === "refresh") {
       // Force refresh by clearing cache and rate limit
       cachedResponse = null
       lastFetchTime = 0
-      isRateLimited = false
-      rateLimitResetTime = 0
 
       return NextResponse.json({
         success: true,
-        message: "Twitter API cache and rate limits cleared",
+        message: "Twitter API cache cleared",
       })
     }
 
     if (action === "reset_rate_limit") {
       // Manually reset rate limit (for testing)
-      isRateLimited = false
-      rateLimitResetTime = 0
+      isGloballyRateLimited = false
+      globalRateLimitResetTime = 0
 
       return NextResponse.json({
         success: true,
         message: "Rate limit manually reset",
-      })
-    }
-
-    if (action === "update_accounts" && accounts) {
-      // This would update the monitored accounts list
-      // For now, we'll just acknowledge the request
-      return NextResponse.json({
-        success: true,
-        message: "Account monitoring list updated",
-        accounts: accounts,
       })
     }
 
